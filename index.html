@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html ng-app="demoapp">
+<head>
+    <title>WonderWaffles</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="bower_components/angular/angular.min.js"></script>
+    <script src="bower_components/leaflet/dist/leaflet.js"></script>
+    <script src="bower_components/leaflet.heat/dist/leaflet-heat.js"></script>
+    <script src="bower_components/angular-leaflet-directive/dist/angular-leaflet-directive.min.js"></script>
+    <script src="bower_components/leaflet-search/dist/leaflet-search.min.js"></script>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js"></script>
+    <script src='https://api.mapbox.com/mapbox.js/plugins/leaflet-fullscreen/v1.0.1/Leaflet.fullscreen.min.js'></script>
+    <script src="bower_components/ngCordova/dist/ng-cordova.min.js"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?v=3&key=AIzaSyDlPM9_2lWMuSsT-rY0h_POtz5ZGR5qVDw&sensor=false"></script>
+    <script src="https://www.gstatic.com/firebasejs/4.5.0/firebase.js"></script>
+
+    <link rel="icon" href="favicon.ico" type="image/x-icon"/>
+    <link href="favicon.ico" rel="apple-touch-icon">
+    <link rel="stylesheet" href="vendor.css"> 
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="bower_components/leaflet/dist/leaflet.css" />
+    <link href='https://api.mapbox.com/mapbox.js/plugins/leaflet-fullscreen/v1.0.1/leaflet.fullscreen.css' rel='stylesheet' />
+    <link rel="stylesheet" href="bower_components/leaflet-search/dist/leaflet-search.min.css" />
+    <script>
+        // Initialize Firebase
+        firebase.initializeApp({
+            apiKey: "AIzaSyAuqaGtnQdIhtqMo99gGxaICKSDYXu-LNM",
+            authDomain: "heatmap-ng.firebaseapp.com",
+            databaseURL: "https://heatmap-ng.firebaseio.com",
+        });
+        var app = angular.module("demoapp", ["leaflet-directive","ngCordova"]);
+        app.controller("LayersHeatmapController", ["$scope", "$http","$cordovaGeolocation","leafletData", function($scope, $http,$cordovaGeolocation,leafletData) {
+
+            var points = [];
+            var heatmap = {
+                name: 'Heat Map',
+                type: 'heat',
+                data: points,
+                visible: true
+            };
+
+            var geocoder = new google.maps.Geocoder();
+            var database = firebase.database();
+
+            function googleGeocoding(text, callResponse) {
+               geocoder.geocode({address: text, componentRestrictions: { country: 'SG' }}, callResponse);
+            }
+
+            function getMemberLocation2(member) {
+               return new Promise((resolve,reject) => {
+                  if(!member.postal_code) {
+                     return resolve(member)
+                  }
+
+                  googleGeocoding(member.postal_code.toString(), function(results, status) {
+                     console.log(status)
+                     if (status === 'OK') {
+                        console.log(member.postal_code, results[0].geometry.location.lat())
+                        member['location'] = {
+                           lat: results[0].geometry.location.lat(),
+                           lng: results[0].geometry.location.lng()
+                        }
+                        resolve(member)
+                     } else {
+                        resolve(member)
+                     }
+                  });
+               });
+            }
+
+            function getMemberLocation(member) {
+               return new Promise((resolve,reject) => {                
+                  var postalCode = member.postal_code.toString();
+                  var postalCodeRef = database.ref('locations/' + postalCode);
+
+                  postalCodeRef.once('value')
+                     .then(function(snapshot) {
+                        var loc = snapshot.val();
+                        if(loc) {
+                           member['location'] = {
+                              lat: loc.lat,
+                              lng: loc.lng
+                           }
+                           resolve(member)
+                        } else {
+                           $http.get(`http://nominatim.openstreetmap.org/search?format=json&postalcode=${postalCode}&countrycodes=sg`)
+                              .then(function (response) {
+                                 console.log(postalCode,response.data)
+                                 if(response.data.length) {
+                                    member['location'] = {
+                                       lat: parseFloat(response.data[0].lat),
+                                       lng: parseFloat(response.data[0].lon)
+                                    }
+                                    postalCodeRef.set({
+                                       postalCode,
+                                       lat: member.location.lat,
+                                       lng: member.location.lng
+                                    })
+                                    .then(function () { 
+                                       resolve(member) 
+                                    })
+                                 } else {
+                                    resolve(member)
+                                 }
+                              })
+                              .catch(function (error) {
+                                 reject(error)
+                              })
+                        }
+                  
+                     })
+                })
+            };
+
+            var members = [];
+            $http.get('http://localhost:8080/membership').then(function(response){
+               
+                var all = response.data.members.slice(0, 500);
+                var promises = [];
+
+                _.each(all, function(member){
+                    promises.push(getMemberLocation(member))
+                });
+
+                Promise.all(promises)
+                    .then(res => {
+                        members = res.filter(el => el.location)
+                        console.log('total',members,members.length)
+
+                        var data = _.map(members, function(member){
+                            console.log(member.firstname, [member.location.lat, member.location.lng])
+                            return [member.location.lat, member.location.lng];
+                        });
+
+                        var heatmap = {
+                            name: 'Heat Map',
+                            type: 'heat',
+                            data: data,
+                            layerOptions: {
+                                radius: 60,
+                                blur: 60,
+                                gradient: {0.1: 'blue', 0.2: 'lime', 0.5: 'orange', 0.9: 'red'}
+                            },
+                            visible: true,
+                        };
+                        var group = {
+                            name: 'Heat Map',
+                            type: 'group',
+                            visible: false,
+                            layerOptions: {
+                                layers: [heatmap,darkmap]
+                            }
+                        };
+
+                        $scope.layers['overlays']['Group Layer'] = group;
+                    
+                        $scope.placeMarkers();
+                        $scope.locate();
+                    })
+                    .catch(e => {
+                        console.log('err',e)
+                    })
+                
+            });
+
+            angular.extend($scope, {
+                controls:{
+                    fullscreen: {
+                        position: 'topleft'
+                    }
+                },
+                maxbounds: {
+                    northEast: {
+                        lat: 1.6,
+                        lng: 104.22
+                    },
+                    southWest: {
+                        lat: 1.1,
+                        lng: 103.42
+                    }
+                },
+                center: {
+                    lat: 1.36,
+                    lng: 103.82,
+                    zoom: 12
+                },
+                defaults: {
+                    minZoom: 11,
+                    maxZoom: 17,
+                },
+                markers : {},
+                layers: {
+                    baselayers: {
+                        mapbox_light: {
+                            name: 'Wondermaps',
+                            url: 'https://api.mapbox.com/v4/{mapid}/{z}/{x}/{y}.png?access_token={apikey}',
+                            type: 'xyz',
+                            layerOptions: {
+                                apikey: 'pk.eyJ1Ijoia3VyaSIsImEiOiJjaW1kcjExd3kwMDdudTRsdmpob293bnA2In0.5KKEJVEwiqlRHTZ9-EpmJA',
+                                mapid: 'mapbox.streets'
+                            }
+                        }
+                    },
+                    overlays: {
+                        search: {
+                            name: 'Waffle Shops',
+                            type: 'group',
+                            visible: true,
+                        }
+                    }
+                }
+            });
+
+
+            var darkmap = {
+              name: 'Darkmaps',
+              url: 'https://api.mapbox.com/v4/{mapid}/{z}/{x}/{y}.png?access_token={apikey}',
+              type: 'xyz',
+              layerOptions: {
+                    apikey: 'pk.eyJ1Ijoia3VyaSIsImEiOiJjaW1kcjExd3kwMDdudTRsdmpob293bnA2In0.5KKEJVEwiqlRHTZ9-EpmJA',
+                    mapid: 'mapbox.dark'
+                }
+            };
+
+            $scope.placeMarkers = function(){
+                _.each(members, function(member) {
+                    telText = '<br/>Tel: ' + member.contact_no;
+                    if (member.contact_no === '')
+                        telText = '';
+
+                    email = '<br/>Email: ' + member.email;
+                    if (member.email === '')
+                        email = '';
+
+                    imgTag = '<img src="'+member.photo_path+'" width="100%"/>';
+                    if (member.photo_path === '')
+                        imgTag = '';
+
+                   $scope.markers[member.member_id] = {
+                       title: member.firstname + ' ' + member.lastname,
+                       lat: member.location.lat,
+                       lng: member.location.lng,
+                       layer: 'search',
+                       message: 
+                       '<div class="row"><div class="col-lg-12 col-md-12 col-sm-12">'
+                       + imgTag
+                       +'<strong>' + member.firstname + '</strong><br/>' + member.address_1
+                       + telText 
+                       + email
+                       + '</div></div>',
+                    //    icon: {
+                    //         iconUrl: 'waffle1.png',
+                    //         iconSize: [25, 100],
+                    //         // iconAnchor: [0, 20],
+                    //         popupAnchor: [0, -50]
+                    //     }
+                   };
+                });
+            }
+
+            $scope.locate = function(){
+                $cordovaGeolocation
+                  .getCurrentPosition()
+                  .then(function (position) {
+                    $scope.center.lat  = position.coords.latitude;
+                    $scope.center.lng = position.coords.longitude;
+                    $scope.center.zoom = 14;
+
+                    $scope.markers.now = {
+                      lat:position.coords.latitude,
+                      lng:position.coords.longitude,
+                      message: "You are here.",
+                      focus: true,
+                      draggable: false
+                    };
+
+                  }, function(err) {
+                    console.log("Location error!");
+                    console.log(err);
+                  });
+
+              };
+            
+            leafletData.getLayers().then(function(baselayers) {
+               // console.log(baselayers.overlays.search);
+               angular.extend($scope.controls, {
+                   search: {
+                       // layer: baselayers.overlays.search,
+                       sourceData: googleGeocoding,
+                       formatData: formatJSON,
+                       markerLocation: false,
+                       autoCollapse: true,
+                       zoom: 16,
+                   }
+               });
+            });
+
+            
+
+            function formatJSON(rawjson){
+                var json = {},
+                    key, loc, disp = [];
+
+                for(var i in rawjson) {
+                    key = rawjson[i].formatted_address;
+                    loc = L.latLng( rawjson[i].geometry.location.lat(), rawjson[i].geometry.location.lng() );
+                    json[ key ]= loc;
+                }
+
+                return json;
+            }
+
+
+        }]);
+    </script>
+</head>
+<div class="header">
+  <div class="navbar navbar-default" role="navigation">
+    <div class="container">
+      <div class="navbar-header">
+        <a class="navbar-brand" href="#/">WonderWaffles</a>
+        </div>
+      </div>
+  </div>
+</div>
+<body ng-controller="LayersHeatmapController">
+    <leaflet lf-center="center" defaults="defaults" controls="controls" maxbounds="maxbounds" markers="markers" layers="layers" width="100%" height="610px"></leaflet>
+</body>
+<div class="footer">
+  <div class="container">
+    <p><span class="glyphicon glyphicon-heart"></span> from the Wondertech team</p>
+  </div>
+</div>
+</html>
