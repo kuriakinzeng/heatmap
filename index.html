@@ -30,6 +30,9 @@
             databaseURL: "https://heatmap-ng.firebaseio.com",
         });
         var app = angular.module("demoapp", ["leaflet-directive","ngCordova"]);
+        app.config(function($logProvider){
+            $logProvider.debugEnabled(false);
+        });
         app.controller("LayersHeatmapController", ["$scope", "$http","$cordovaGeolocation","leafletData", function($scope, $http,$cordovaGeolocation,leafletData) {
 
             var points = [];
@@ -201,7 +204,7 @@
 
             $http.get('http://localhost:8080/membership').then(function(response){
                 
-                var all = response.data.members.slice(0, 3000);
+                var all = response.data.members;
                 console.log(all.length,'from',response.data.members.length)
                 var promises = []
 
@@ -234,12 +237,12 @@
                                 blur: 60,
                                 gradient: {0.1: 'blue', 0.2: 'lime', 0.5: 'orange', 0.9: 'red'}
                             },
-                            visible: true,
+                            visible: false,
                         };
                         var group = {
                             name: 'Heat Map',
                             type: 'group',
-                            visible: false,
+                            visible: true,
                             layerOptions: {
                                 layers: [heatmap,darkmap]
                             }
@@ -247,7 +250,7 @@
 
                         $scope.layers['overlays']['Group Layer'] = group;
                     
-                        $scope.placeMarkers();
+                        // $scope.placeMarkers();
                         $scope.locate();
                     })
                     .catch(e => {
@@ -298,7 +301,7 @@
                         search: {
                             name: 'Waffle Shops',
                             type: 'group',
-                            visible: true,
+                            visible: false,
                         }
                     }
                 }
