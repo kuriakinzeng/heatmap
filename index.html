@@ -52,7 +52,7 @@
 
             var locationBackups = {};
 
-            function getMemberLocation2(member) {
+            function getMemberLocation(member) {
                return new Promise((resolve,reject) => {
                   if(!member.postal_code) {
                      return resolve(member)
@@ -122,57 +122,30 @@
                               lat: loc.lat,
                               lng: loc.lng
                            }
-                           locationBackups[postalCode] = member.location                           
-                           resolve(member)
+                           locationBackups[postalCode] = member.location
+                           database.ref('members/' + member.member_id).update({
+                             member_id: member.member_id,
+                             lat: loc.lat,
+                             lng: loc.lng,
+                             postal_code: member.postal_code
+                           })
+                           .then(r => {
+                             resolve(member)
+                           })                         
                         } else {
-                            resolve(member);
+                          database.ref('members/' + member.member_id).update({
+                             member_id: member.member_id,
+                             lat: null,
+                             lng: null,
+                             postal_code: member.postal_code
+                           })
+                           .then(r => {
+                             resolve(member)
+                           }) 
                         }
                      });
                });
             }
-
-            function getMemberLocation(member) {
-               return new Promise((resolve,reject) => {                
-                  var postalCode = member.postal_code.toString();
-                  var postalCodeRef = database.ref('locations/' + postalCode);
-
-                  postalCodeRef.once('value')
-                     .then(function(snapshot) {
-                        var loc = snapshot.val();
-                        if(loc) {
-                           member['location'] = {
-                              lat: loc.lat,
-                              lng: loc.lng
-                           }
-                           resolve(member)
-                        } else {
-                           $http.get(`http://nominatim.openstreetmap.org/search?format=json&postalcode=${postalCode}&countrycodes=sg`)
-                              .then(function (response) {
-                                 if(response.data.length) {
-                                    member['location'] = {
-                                       lat: parseFloat(response.data[0].lat),
-                                       lng: parseFloat(response.data[0].lon)
-                                    }
-                                    postalCodeRef.set({
-                                       postalCode,
-                                       lat: member.location.lat,
-                                       lng: member.location.lng
-                                    })
-                                    .then(function () { 
-                                       resolve(member) 
-                                    })
-                                 } else {
-                                    resolve(member)
-                                 }
-                              })
-                              .catch(function (error) {
-                                 reject(error)
-                              })
-                        }
-                  
-                     })
-                })
-            };
 
             var members = [];
 
@@ -185,8 +158,8 @@
                     console.log('start :',semua[0].member_id, 'end :',semua[semua.length - 1].member_id)
                     console.log(`stars [${mulai}]:`,all[mulai].member_id, `ens [${mulai+9}]:`,all[mulai + 9].member_id)
 
-                    _.each(semua, function(member){
-                        promises.push(getMemberLocation2(member))
+                    _.each(semua, function(member) {
+                        promises.push(getMemberLocation(member))
                     });
 
                     Promise.all(promises)
